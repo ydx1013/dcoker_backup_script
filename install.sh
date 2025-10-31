@@ -290,11 +290,22 @@ start_http_server() {
         return 1
     fi
 
-    # 获取本机IP地址
+    # 获取本机IP地址（兼容Linux与macOS）
     local server_ip=""
-    if command -v hostname >/dev/null 2>&1; then
-        server_ip=$(hostname -I | awk '{print $1}' 2>/dev/null || echo "localhost")
+    if command -v hostname >/dev/null 2>&1 && hostname -I >/dev/null 2>&1; then
+        # Linux 常见方式
+        server_ip=$(hostname -I | awk '{print $1}' 2>/dev/null)
+    elif [[ "$(uname)" == "Darwin" ]]; then
+        # macOS：优先尝试en0，其次en1；若失败则从ifconfig解析
+        server_ip=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null)
+        if [[ -z "$server_ip" ]]; then
+            server_ip=$(ifconfig 2>/dev/null | awk '/inet / && $2 != "127.0.0.1" {print $2; exit}')
+        fi
     else
+        # 其他环境兜底
+        server_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    fi
+    if [[ -z "$server_ip" ]]; then
         server_ip="localhost"
     fi
 
@@ -1233,8 +1244,9 @@ main() {
             exit 1
         fi
 
-        # 检查备份目录中是否有备份文件
-        local backup_count=$(find "$BACKUP_DIR" -maxdepth 1 -type d -name "*_*" | wc -l)
+        # 检查备份目录中是否有备份文件（兼容macOS的BSD find，无 -maxdepth）
+        # 仅统计一级目录，名称形如 *_*
+        local backup_count=$(find "$BACKUP_DIR" -type d -name "*_*" -prune -print | wc -l)
         if [[ $backup_count -eq 0 ]]; then
             log_error "备份目录中没有找到备份文件: $BACKUP_DIR"
             exit 1
