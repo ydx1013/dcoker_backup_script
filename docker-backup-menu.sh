@@ -11,6 +11,30 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/backup-utils.sh"
 
+# 解析 install.sh 路径（兼容不同部署位置）
+get_install_sh() {
+    local candidate
+    candidate="${SCRIPT_DIR}/install.sh"
+    if [[ -x "$candidate" ]]; then
+        echo "$candidate"
+        return 0
+    fi
+
+    candidate="./install.sh"
+    if [[ -x "$candidate" ]]; then
+        echo "$candidate"
+        return 0
+    fi
+
+    if command -v install.sh >/dev/null 2>&1; then
+        echo "$(command -v install.sh)"
+        return 0
+    fi
+
+    log_error "未找到 install.sh，请将脚本复制到 ${SCRIPT_DIR} 或确保当前目录存在 install.sh"
+    return 1
+}
+
 # 颜色定义
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -546,13 +570,17 @@ start_http_server_menu() {
             return
             ;;
         a)
-            execute_backup "${SCRIPT_DIR}/install.sh --start-http" "启动HTTP服务器（所有备份）"
+            local install_sh
+            install_sh=$(get_install_sh) || { read -p "按回车键继续..."; return; }
+            execute_backup "${install_sh} --start-http" "启动HTTP服务器（所有备份）"
             ;;
         *)
             if [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -ge 1 ]] && [[ "$choice" -le ${#backups[@]} ]]; then
                 local selected_backup="${backups[$((choice-1))]}"
                 local backup_name=$(basename "${selected_backup}")
-                execute_backup "${SCRIPT_DIR}/install.sh --start-http -b '$selected_backup'" "启动HTTP服务器（$backup_name）"
+                local install_sh
+                install_sh=$(get_install_sh) || { read -p "按回车键继续..."; return; }
+                execute_backup "${install_sh} --start-http -b '$selected_backup'" "启动HTTP服务器（$backup_name）"
             else
                 log_error "无效选择"
                 read -p "按回车键继续..."
@@ -566,7 +594,9 @@ stop_http_server_menu() {
     echo -e "${CYAN}停止HTTP服务器${NC}"
     echo ""
 
-    execute_backup "${SCRIPT_DIR}/install.sh --stop-http" "停止HTTP服务器"
+    local install_sh
+    install_sh=$(get_install_sh) || { read -p "按回车键继续..."; return; }
+    execute_backup "${install_sh} --stop-http" "停止HTTP服务器"
 }
 
 # 下载并恢复备份
@@ -598,7 +628,9 @@ download_restore_menu() {
     echo ""
 
     if ask_confirmation "确认下载并恢复此备份吗？"; then
-        execute_backup "${SCRIPT_DIR}/install.sh --download-restore '$download_url'" "下载并恢复备份"
+        local install_sh
+        install_sh=$(get_install_sh) || { read -p "按回车键继续..."; return; }
+        execute_backup "${install_sh} --download-restore '$download_url'" "下载并恢复备份"
     fi
 }
 
