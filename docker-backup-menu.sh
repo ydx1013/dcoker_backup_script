@@ -546,13 +546,13 @@ start_http_server_menu() {
             return
             ;;
         a)
-            execute_backup "install.sh --start-http" "启动HTTP服务器（所有备份）"
+            execute_backup "${SCRIPT_DIR}/install.sh --start-http" "启动HTTP服务器（所有备份）"
             ;;
         *)
             if [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -ge 1 ]] && [[ "$choice" -le ${#backups[@]} ]]; then
                 local selected_backup="${backups[$((choice-1))]}"
                 local backup_name=$(basename "${selected_backup}")
-                execute_backup "install.sh --start-http -b '$selected_backup'" "启动HTTP服务器（$backup_name）"
+                execute_backup "${SCRIPT_DIR}/install.sh --start-http -b '$selected_backup'" "启动HTTP服务器（$backup_name）"
             else
                 log_error "无效选择"
                 read -p "按回车键继续..."
@@ -566,7 +566,7 @@ stop_http_server_menu() {
     echo -e "${CYAN}停止HTTP服务器${NC}"
     echo ""
 
-    execute_backup "install.sh --stop-http" "停止HTTP服务器"
+    execute_backup "${SCRIPT_DIR}/install.sh --stop-http" "停止HTTP服务器"
 }
 
 # 下载并恢复备份
@@ -598,7 +598,7 @@ download_restore_menu() {
     echo ""
 
     if ask_confirmation "确认下载并恢复此备份吗？"; then
-        execute_backup "install.sh --download-restore '$download_url'" "下载并恢复备份"
+        execute_backup "${SCRIPT_DIR}/install.sh --download-restore '$download_url'" "下载并恢复备份"
     fi
 }
 
