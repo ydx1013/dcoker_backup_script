@@ -1177,6 +1177,101 @@ EOF
     log_info ">> 备份摘要创建完成: $container_name"
 }
 
+json_escape() {
+    local value="$1"
+    if command -v python3 >/dev/null 2>&1; then
+        python3 -c 'import json,sys; print(json.dumps(sys.argv[1], ensure_ascii=False))' "$value"
+    elif command -v python >/dev/null 2>&1; then
+        python -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$value"
+    else
+        printf '"%s"' "${value//\"/\\\"}"
+    fi
+}
+
+create_backup_manifest() {
+    local backup_dir="$1"
+    local container_name="$2"
+    local is_compose="${3:-false}"
+    local compose_info="${4:-}"
+    local manifest_file="${backup_dir}/manifest.json"
+    local docker_version="unknown"
+    local backup_size="unknown"
+    local file_count="0"
+    local container_id=""
+    local image=""
+    local status=""
+
+    log_info "生成备份清单 manifest.json..."
+
+    docker_version=$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo "unknown")
+    backup_size=$(du -sh "${backup_dir}" 2>/dev/null | cut -f1 || echo "unknown")
+    file_count=$(find "${backup_dir}" -type f ! -name 'manifest.json' ! -name 'checksums.sha256' 2>/dev/null | wc -l | tr -d ' ')
+    container_id=$(docker inspect --format='{{.Id}}' "${container_name}" 2>/dev/null || echo "")
+    image=$(docker inspect --format='{{.Config.Image}}' "${container_name}" 2>/dev/null || echo "")
+    status=$(docker inspect --format='{{.State.Status}}' "${container_name}" 2>/dev/null || echo "")
+
+    cat > "${manifest_file}" << EOF
+{
+  "manifest_version": "1.0",
+  "backup_tool_version": "1.0",
+  "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "container": {
+    "name": $(json_escape "${container_name}"),
+    "id": $(json_escape "${container_id}"),
+    "image": $(json_escape "${image}"),
+    "status": $(json_escape "${status}"),
+    "is_compose": ${is_compose},
+    "compose_info": $(json_escape "${compose_info}")
+  },
+  "backup": {
+    "directory": $(json_escape "${backup_dir}"),
+    "size": $(json_escape "${backup_size}"),
+    "file_count": ${file_count},
+    "includes_volumes": $([[ "${EXCLUDE_VOLUMES}" != true ]] && echo true || echo false),
+    "includes_mounts": $([[ "${EXCLUDE_MOUNTS}" != true ]] && echo true || echo false),
+    "includes_images": $([[ "${EXCLUDE_IMAGES}" != true && "${FULL_BACKUP}" == true ]] && echo true || echo false)
+  },
+  "environment": {
+    "docker_version": $(json_escape "${docker_version}"),
+    "host": $(json_escape "$(hostname 2>/dev/null || echo unknown)")
+  },
+  "verification": {
+    "checksum_file": "checksums.sha256",
+    "checksum_algorithm": "sha256"
+  }
+}
+EOF
+
+    log_success "manifest.json 生成完成"
+}
+
+generate_backup_checksums() {
+    local backup_dir="$1"
+    local checksum_file="${backup_dir}/checksums.sha256"
+
+    log_info "生成文件校验和 checksums.sha256..."
+    : > "${checksum_file}"
+
+    while IFS= read -r -d '' file; do
+        local relative_path="${file#${backup_dir}/}"
+        local hash=""
+
+        if command -v sha256sum >/dev/null 2>&1; then
+            hash=$(sha256sum "${file}" | awk '{print $1}')
+        elif command -v shasum >/dev/null 2>&1; then
+            hash=$(shasum -a 256 "${file}" | awk '{print $1}')
+        else
+            log_warning "缺少 sha256sum 或 shasum，跳过校验和生成"
+            rm -f "${checksum_file}"
+            return 0
+        fi
+
+        printf '%s  %s\n' "${hash}" "${relative_path}" >> "${checksum_file}"
+    done < <(find "${backup_dir}" -type f ! -name 'checksums.sha256' -print0)
+
+    log_success "checksums.sha256 生成完成"
+}
+
 # 备份单个容器
 backup_container() {
     local container_name="$1"
@@ -1239,7 +1334,12 @@ backup_container() {
     log_info ">> 步骤7: 开始创建备份摘要"
     create_backup_summary "${container_backup_dir}" "${container_name}" "${is_compose}" "${compose_info}"
     log_info ">> 步骤7完成: 备份摘要创建完成"
-    
+
+    log_info ">> 步骤8: 开始生成备份清单和校验和"
+    create_backup_manifest "${container_backup_dir}" "${container_name}" "${is_compose}" "${compose_info}"
+    generate_backup_checksums "${container_backup_dir}"
+    log_info ">> 步骤8完成: 备份清单和校验和生成完成"
+
     log_success "容器 '${container_name}' 备份完成: ${container_backup_dir}"
     log_info ">> 备份函数正常返回，准备处理下一个容器"
     

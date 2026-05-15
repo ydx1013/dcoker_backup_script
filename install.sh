@@ -206,6 +206,7 @@ upgrade_installed_tools() {
     local files=(
         "docker-backup.sh"
         "docker-restore.sh"
+        "docker-verify.sh"
         "backup-utils.sh"
         "docker-backup-menu.sh"
         "docker-cleanup.sh"
@@ -703,6 +704,7 @@ install_files() {
     local files=(
         "docker-backup.sh"
         "docker-restore.sh"
+        "docker-verify.sh"
         "backup-utils.sh"
         "docker-backup-menu.sh"
         "docker-cleanup.sh"
@@ -907,6 +909,13 @@ cd $INSTALL_DIR
 exec ./docker-backup-menu.sh "\$@"
 EOF
 
+    # 创建校验命令
+    cat > /usr/local/bin/docker-verify << EOF
+#!/bin/bash
+cd $INSTALL_DIR
+exec ./docker-verify.sh "\$@"
+EOF
+
     # 创建清理命令
     cat > /usr/local/bin/docker-cleanup << EOF
 #!/bin/bash
@@ -931,6 +940,7 @@ EOF
     chmod +x /usr/local/bin/docker-backup
     chmod +x /usr/local/bin/docker-restore
     chmod +x /usr/local/bin/docker-backup-menu
+    chmod +x /usr/local/bin/docker-verify
     chmod +x /usr/local/bin/docker-cleanup
     chmod +x /usr/local/bin/docker-backup-server
     chmod +x /usr/local/bin/docker-backup-download
@@ -941,6 +951,7 @@ EOF
     log_info "  docker-backup nginx mysql     # 备份指定容器"
     log_info "  docker-restore /path/to/backup # 恢复容器"
     log_info "  docker-backup-menu            # 交互式菜单"
+    log_info "  docker-verify /path/to/backup # 校验备份完整性"
     log_info "  docker-cleanup 30             # 清理30天前的备份"
     log_info "  docker-backup-server          # 启动HTTP服务器"
     log_info "  docker-backup-download URL    # 下载并恢复备份"

@@ -76,6 +76,8 @@ show_main_menu() {
     echo -e "${PURPLE}🔄 恢复操作${NC}"
     echo "  11) 恢复容器（交互式向导）"
     echo "  12) 列出可恢复的备份"
+    echo "  22) 校验备份完整性"
+    echo "  23) 恢复 dry-run 预检"
     echo ""
     echo -e "${RED}🧹 维护操作${NC}"
     echo "  13) 清理旧备份文件"
@@ -253,6 +255,26 @@ restore_container() {
             read -p "按回车键继续..."
             ;;
     esac
+}
+
+verify_backup() {
+    read -p "请输入备份目录路径: " backup_path
+    if [[ -n "$backup_path" ]] && [[ -d "$backup_path" ]]; then
+        execute_backup "docker-verify \"$backup_path\"" "校验备份完整性: $backup_path"
+    else
+        log_error "无效的备份目录路径"
+        read -p "按回车键继续..."
+    fi
+}
+
+dry_run_restore() {
+    read -p "请输入备份目录路径: " backup_path
+    if [[ -n "$backup_path" ]] && [[ -d "$backup_path" ]]; then
+        execute_backup "docker-restore --dry-run \"$backup_path\"" "恢复 dry-run 预检: $backup_path"
+    else
+        log_error "无效的备份目录路径"
+        read -p "按回车键继续..."
+    fi
 }
 
 # 列出可恢复的备份
@@ -662,7 +684,7 @@ main() {
         show_title
         show_main_menu
 
-        read -p "请输入选择 (0-21): " choice
+        read -p "请输入选择 (0-23): " choice
         echo ""
 
         case $choice in
@@ -733,8 +755,14 @@ main() {
             21)
                 show_version
                 ;;
+            22)
+                verify_backup
+                ;;
+            23)
+                dry_run_restore
+                ;;
             *)
-                log_error "无效选择，请输入0-21之间的数字"
+                log_error "无效选择，请输入0-23之间的数字"
                 read -p "按回车键继续..."
                 ;;
         esac

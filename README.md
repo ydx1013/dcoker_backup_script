@@ -48,6 +48,8 @@ docker-backup-menu
 - **数据保护**：支持Docker volumes和bind mounts的完整备份
 - **镜像备份**：可选择性备份容器镜像（完整备份模式）
 - **一键恢复**：在新服务器上快速恢复容器和数据
+- **备份校验**：自动生成 manifest.json 和 checksums.sha256，支持完整性校验
+- **恢复预检**：支持 dry-run，恢复前检查端口冲突、磁盘空间和 Docker 版本
 - **增量支持**：智能识别和备份变更的数据
 - **交互式菜单**：图形化操作界面，新手友好
 - **Docker Compose支持**：自动检测并备份docker-compose项目
@@ -181,6 +183,7 @@ cd dcoker_backup_script
 # 或者直接下载脚本文件
 wget https://raw.githubusercontent.com/shuguangnet/docker_backup_script/main/docker-backup.sh
 wget https://raw.githubusercontent.com/shuguangnet/docker_backup_script/main/docker-restore.sh
+wget https://raw.githubusercontent.com/shuguangnet/docker_backup_script/main/docker-verify.sh
 wget https://raw.githubusercontent.com/shuguangnet/docker_backup_script/main/backup-utils.sh
 wget https://raw.githubusercontent.com/shuguangnet/docker_backup_script/main/backup.conf
 ```
@@ -189,6 +192,7 @@ wget https://raw.githubusercontent.com/shuguangnet/docker_backup_script/main/bac
 ```bash
 chmod +x docker-backup.sh
 chmod +x docker-restore.sh
+chmod +x docker-verify.sh
 chmod +x backup-utils.sh
 ```
 
@@ -248,6 +252,12 @@ docker-restore -f /var/backups/docker/nginx_20231201_120000
 
 # 恢复到新名称
 docker-restore --container-name new-nginx /var/backups/docker/nginx_20231201_120000
+
+# 校验备份完整性
+docker-verify /var/backups/docker/nginx_20231201_120000
+
+# 恢复预检，不执行实际恢复
+docker-restore --dry-run /var/backups/docker/nginx_20231201_120000
 ```
 
 #### 管理命令
@@ -392,7 +402,12 @@ curl -X POST http://localhost:8080/backup \
 
 # 跳过特定组件恢复
 ./docker-restore.sh --no-volumes --no-mounts /path/to/backup/nginx_20231201_120000
+
+# 恢复预检，不执行实际恢复
+./docker-restore.sh --dry-run /path/to/backup/nginx_20231201_120000
 ```
+
+恢复前会自动执行可靠性预检，包括 Docker 版本检查、端口冲突检查和磁盘空间检查。
 
 ## 🖥️ 交互式菜单详解
 
@@ -438,9 +453,11 @@ curl -X POST http://localhost:8080/backup \
 - **选项9**: 备份指定容器（排除数据卷）
 - **选项10**: 备份指定容器（排除挂载点）
 
-#### 🔄 恢复操作 (选项11-12)
+#### 🔄 恢复操作 (选项11-12、22-23)
 - **选项11**: 恢复容器（交互式向导）
 - **选项12**: 列出可恢复的备份
+- **选项22**: 校验备份完整性
+- **选项23**: 恢复 dry-run 预检
 
 #### 🧹 维护操作 (选项13-15)
 - **选项13**: 清理旧备份文件
@@ -537,7 +554,9 @@ backup_dir/
 ├── nginx_image.tar.gz        # 容器镜像（完整备份）
 ├── restore.sh                # 自动恢复脚本
 ├── generated_run_command.sh  # Docker运行命令
-└── backup_summary.txt        # 备份摘要
+├── backup_summary.txt        # 备份摘要
+├── manifest.json             # 备份清单和环境元数据
+└── checksums.sha256          # 文件完整性校验和
 ```
 
 ### Docker Compose容器
@@ -554,7 +573,9 @@ backup_dir/
 │   └── compose_directory.txt # 原始目录路径
 ├── project_service_image.tar.gz # 容器镜像（完整备份）
 ├── restore.sh                # 自动恢复脚本（支持docker-compose）
-└── backup_summary.txt        # 备份摘要
+├── backup_summary.txt        # 备份摘要
+├── manifest.json             # 备份清单和环境元数据
+└── checksums.sha256          # 文件完整性校验和
 ```
 
 ## 🔧 实际使用示例
@@ -1159,6 +1180,7 @@ docker-cleanup 30   # 清理30天前的备份
 docker-backup/
 ├── docker-backup.sh              # 主备份脚本
 ├── docker-restore.sh             # 恢复脚本
+├── docker-verify.sh              # 备份完整性校验脚本
 ├── docker-backup-menu.sh         # 交互式菜单
 ├── docker-cleanup.sh             # 清理工具
 ├── backup-utils.sh               # 工具函数库
@@ -1181,7 +1203,8 @@ docker-backup/
 ### 核心组件说明
 
 - **docker-backup.sh**: 主要的Docker容器备份脚本
-- **docker-restore.sh**: 容器恢复脚本
+- **docker-restore.sh**: 容器恢复脚本，支持 dry-run 预检
+- **docker-verify.sh**: 校验备份目录结构、manifest.json 和 checksums.sha256
 - **docker-backup-menu.sh**: 交互式操作菜单
 - **docker-cleanup.sh**: 备份文件清理工具
 - **go/callback/**: 基于Go的HTTP回调API服务，支持外部系统触发备份

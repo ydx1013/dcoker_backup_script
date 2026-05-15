@@ -38,6 +38,7 @@ show_usage() {
     -f, --force                 强制恢复（覆盖现有容器和数据）
     -v, --verbose              详细输出模式
     -n, --no-start             恢复后不自动启动容器
+    --dry-run                  仅预检和展示恢复计划，不执行恢复
     --no-volumes               跳过数据卷恢复
     --no-mounts                跳过挂载点恢复
     --no-images                跳过镜像恢复
@@ -71,6 +72,7 @@ parse_arguments() {
     NO_VOLUMES=false
     NO_MOUNTS=false
     NO_IMAGES=false
+    DRY_RUN=false
     CUSTOM_CONTAINER_NAME=""
     BACKUP_PATTERN=""
 
@@ -102,6 +104,11 @@ parse_arguments() {
                 ;;
             --no-images)
                 NO_IMAGES=true
+                shift
+                ;;
+            --dry-run)
+                DRY_RUN=true
+                NO_START=true
                 shift
                 ;;
             --container-name)
@@ -200,14 +207,114 @@ get_container_info() {
     [[ -n "$CONTAINER_PORTS" ]] && log_info "  端口: $CONTAINER_PORTS"
 }
 
+check_docker_version() {
+    local min_major=20
+    local version
+
+    if ! version=$(docker version --format '{{.Server.Version}}' 2>/dev/null); then
+        log_error "无法获取Docker服务端版本"
+        return 1
+    fi
+
+    local major="${version%%.*}"
+    if [[ "$major" =~ ^[0-9]+$ ]] && [[ $major -lt $min_major ]]; then
+        log_warning "Docker版本较旧: $version，建议升级到 ${min_major}.x 或更高版本"
+    else
+        log_info "Docker版本检查通过: $version"
+    fi
+}
+
+check_port_conflicts() {
+    local failed=0
+
+    while IFS= read -r port_mapping; do
+        [[ -z "$port_mapping" ]] && continue
+        local host_port="${port_mapping#*:}"
+        [[ -z "$host_port" || "$host_port" == "null" ]] && continue
+
+        if docker ps --format '{{.Ports}}' | grep -Eq "(^|[,:-])${host_port}->|:${host_port}->|0\.0\.0\.0:${host_port}->|127\.0\.0\.1:${host_port}->|\[::\]:${host_port}->"; then
+            log_error "端口冲突: 主机端口 $host_port 已被Docker容器占用"
+            failed=1
+        elif command -v lsof >/dev/null 2>&1 && lsof -i TCP:"$host_port" -sTCP:LISTEN >/dev/null 2>&1; then
+            log_error "端口冲突: 主机端口 $host_port 已被进程占用"
+            failed=1
+        else
+            log_info "端口可用: $host_port"
+        fi
+    done <<< "$(printf '%s\n' "$CONTAINER_PORTS" | tr ' ' '\n')"
+
+    return $failed
+}
+
+check_restore_disk_space() {
+    local backup_dir="$1"
+    local target_path="/"
+    local required_mb=512
+
+    if [[ -d "$backup_dir" ]]; then
+        local backup_kb
+        backup_kb=$(du -sk "$backup_dir" 2>/dev/null | awk '{print $1}' || echo 0)
+        required_mb=$((backup_kb / 1024 + 512))
+    fi
+
+    if command -v df >/dev/null 2>&1; then
+        local available_kb
+        available_kb=$(df "$target_path" | tail -1 | awk '{print $4}')
+        local available_mb=$((available_kb / 1024))
+        if [[ $available_mb -lt $required_mb ]]; then
+            log_error "磁盘空间不足: 需要约 ${required_mb}MB，可用 ${available_mb}MB"
+            return 1
+        fi
+        log_info "磁盘空间检查通过: 需要约 ${required_mb}MB，可用 ${available_mb}MB"
+    else
+        log_warning "无法检查磁盘空间：df命令不可用"
+    fi
+}
+
+run_preflight_checks() {
+    local backup_dir="$1"
+    local failed=0
+
+    log_info "执行恢复预检..."
+    check_docker_version || failed=1
+    check_port_conflicts || failed=1
+    check_restore_disk_space "$backup_dir" || failed=1
+
+    if [[ $failed -ne 0 ]]; then
+        log_error "恢复预检失败"
+    fi
+
+    return $failed
+}
+
+show_dry_run_plan() {
+    local backup_dir="$1"
+
+    print_separator "=" 60
+    log_info "恢复 dry-run 计划（不会修改系统）"
+    print_separator "=" 60
+    echo "备份目录: $backup_dir"
+    echo "容器名称: $CONTAINER_NAME"
+    echo "镜像: $CONTAINER_IMAGE"
+    echo "恢复镜像: $([[ "$NO_IMAGES" == true ]] && echo 跳过 || echo 执行)"
+    echo "恢复数据卷: $([[ "$NO_VOLUMES" == true ]] && echo 跳过 || echo 执行)"
+    echo "恢复挂载点: $([[ "$NO_MOUNTS" == true ]] && echo 跳过 || echo 执行)"
+    echo "启动容器: $([[ "$NO_START" == true ]] && echo 跳过 || echo 执行)"
+    echo "端口映射: ${CONTAINER_PORTS:-无}"
+    print_separator "=" 60
+}
+
 # 检查容器冲突
 check_container_conflicts() {
     local container_name="$1"
     
     if docker ps -a --format "{{.Names}}" | grep -q "^${container_name}$"; then
-        if [[ "$FORCE" == true ]]; then
+        if [[ "$DRY_RUN" == true ]]; then
+            log_warning "dry-run：发现现有容器 '$container_name'，实际恢复时需要使用 -f 覆盖或改名"
+            return 0
+        elif [[ "$FORCE" == true ]]; then
             log_warning "强制模式：将删除现有容器 '$container_name'"
-            
+
             # 停止容器
             if docker ps --format "{{.Names}}" | grep -q "^${container_name}$"; then
                 log_info "停止现有容器..."
@@ -539,9 +646,16 @@ main() {
     # 获取容器信息
     get_container_info "$BACKUP_DIR"
     
-    # 检查容器冲突
+    # 检查容器冲突和恢复预检
     check_container_conflicts "$CONTAINER_NAME"
-    
+    run_preflight_checks "$BACKUP_DIR"
+
+    if [[ "$DRY_RUN" == true ]]; then
+        show_dry_run_plan "$BACKUP_DIR"
+        log_success "dry-run 检查完成，未执行任何恢复操作"
+        return 0
+    fi
+
     # 恢复各个组件
     restore_image "$BACKUP_DIR"
     restore_volumes "$BACKUP_DIR"
