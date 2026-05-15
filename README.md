@@ -50,6 +50,7 @@ docker-backup-menu
 - **一键恢复**：在新服务器上快速恢复容器和数据
 - **备份校验**：自动生成 manifest.json 和 checksums.sha256，支持完整性校验
 - **恢复预检**：支持 dry-run，恢复前检查端口冲突、磁盘空间和 Docker 版本
+- **AI友好CLI**：提供统一 `docker-backup-cli` 入口，可注册到 OpenCLI 供 AI Agent 调用
 - **增量支持**：智能识别和备份变更的数据
 - **交互式菜单**：图形化操作界面，新手友好
 - **Docker Compose支持**：自动检测并备份docker-compose项目
@@ -184,6 +185,7 @@ cd dcoker_backup_script
 wget https://raw.githubusercontent.com/shuguangnet/docker_backup_script/main/docker-backup.sh
 wget https://raw.githubusercontent.com/shuguangnet/docker_backup_script/main/docker-restore.sh
 wget https://raw.githubusercontent.com/shuguangnet/docker_backup_script/main/docker-verify.sh
+wget https://raw.githubusercontent.com/shuguangnet/docker_backup_script/main/docker-backup-cli.sh
 wget https://raw.githubusercontent.com/shuguangnet/docker_backup_script/main/backup-utils.sh
 wget https://raw.githubusercontent.com/shuguangnet/docker_backup_script/main/backup.conf
 ```
@@ -193,6 +195,7 @@ wget https://raw.githubusercontent.com/shuguangnet/docker_backup_script/main/bac
 chmod +x docker-backup.sh
 chmod +x docker-restore.sh
 chmod +x docker-verify.sh
+chmod +x docker-backup-cli.sh
 chmod +x backup-utils.sh
 ```
 
@@ -220,6 +223,198 @@ sudo chown $(whoami):$(whoami) /var/backups/docker
 # 启动交互式菜单
 docker-backup-menu
 ```
+
+#### AI友好统一CLI（OpenCLI/Agent 推荐）
+```bash
+# 查看工具和Docker状态
+docker-backup-cli status --json
+
+# 列出可恢复备份
+docker-backup-cli list-backups --json
+
+# 备份所有运行中的容器
+docker-backup-cli backup -a --exclude-images
+
+# 校验备份完整性
+docker-backup-cli verify /tmp/docker-backups/nginx_20260516_120000
+
+# 恢复前dry-run预检
+docker-backup-cli dry-run /tmp/docker-backups/nginx_20260516_120000
+
+# 恢复但不自动启动容器
+docker-backup-cli restore --no-start /tmp/docker-backups/nginx_20260516_120000
+
+# 清理30天前备份，跳过交互确认
+docker-backup-cli cleanup -f 30
+```
+
+#### 注册到 OpenCLI
+```bash
+# 安装后注册，让 AI 可以通过 OpenCLI 发现和调用
+opencli register docker-backup-cli \
+  --binary docker-backup-cli \
+  --desc "Docker backup and restore CLI for AI agents"
+
+# 或使用内置注册命令
+docker-backup-cli opencli-register
+```
+
+#### AI 如何使用
+
+AI Agent 推荐优先调用 `docker-backup-cli`，因为它把备份、恢复、校验、清理等能力统一成稳定的非交互式命令，并且为查询类命令提供 `--json` 输出。
+
+##### 1. 发现当前环境状态
+```bash
+docker-backup-cli status --json
+```
+
+返回示例：
+```json
+{
+  "docker": {
+    "installed": true,
+    "running": true,
+    "version": "25.0.0"
+  },
+  "tools": {
+    "jq": true,
+    "opencli": true
+  },
+  "paths": {
+    "script_dir": "/opt/docker-backup",
+    "default_backup_dir": "/tmp/docker-backups"
+  }
+}
+```
+
+AI 应先检查：
+- `docker.installed` 是否为 `true`
+- `docker.running` 是否为 `true`
+- `tools.jq` 是否为 `true`
+
+##### 2. 查询已有备份
+```bash
+docker-backup-cli list-backups --json
+```
+
+也可以指定备份目录：
+```bash
+docker-backup-cli list-backups --json -d /var/backups/docker
+```
+
+返回示例：
+```json
+{
+  "backup_dir": "/tmp/docker-backups",
+  "backups": [
+    {
+      "name": "nginx_20260516_120000",
+      "path": "/tmp/docker-backups/nginx_20260516_120000",
+      "size": "128M",
+      "modified": "2026-05-16T12:00:00+0800"
+    }
+  ],
+  "count": 1,
+  "exists": true
+}
+```
+
+AI 应使用 `backups[].path` 作为后续 `verify`、`dry-run`、`restore` 的输入。
+
+##### 3. 执行备份
+```bash
+# 备份所有运行中的容器，跳过镜像以节省空间
+docker-backup-cli backup -a --exclude-images
+
+# 备份指定容器
+docker-backup-cli backup nginx mysql
+
+# 完整备份指定容器，包含镜像
+docker-backup-cli backup -f nginx
+```
+
+##### 4. 校验备份
+恢复前建议 AI 必须先校验备份完整性：
+```bash
+docker-backup-cli verify /tmp/docker-backups/nginx_20260516_120000
+```
+
+校验通过后再进入 dry-run 或恢复流程。
+
+##### 5. 恢复前 dry-run
+AI 在真正恢复前应先执行 dry-run，检查 Docker 版本、端口冲突、磁盘空间等问题：
+```bash
+docker-backup-cli dry-run /tmp/docker-backups/nginx_20260516_120000
+```
+
+如果 dry-run 失败，AI 不应继续执行恢复，应先把失败原因反馈给用户。
+
+##### 6. 执行恢复
+默认推荐先恢复但不自动启动容器：
+```bash
+docker-backup-cli restore --no-start /tmp/docker-backups/nginx_20260516_120000
+```
+
+如果确认要覆盖已有容器，必须显式使用 `--force`：
+```bash
+docker-backup-cli restore --force /tmp/docker-backups/nginx_20260516_120000
+```
+
+恢复为新容器名称：
+```bash
+docker-backup-cli restore \
+  --container-name nginx-restored \
+  /tmp/docker-backups/nginx_20260516_120000
+```
+
+##### 7. 清理旧备份
+清理属于破坏性操作。AI 应先说明影响范围，再由用户确认后执行：
+```bash
+# 清理30天前的备份，跳过交互确认
+docker-backup-cli cleanup -f 30
+```
+
+##### 8. 推荐 AI 调用流程
+
+```text
+1. docker-backup-cli status --json
+2. docker-backup-cli list-backups --json
+3. docker-backup-cli verify <backup_path>
+4. docker-backup-cli dry-run <backup_path>
+5. docker-backup-cli restore --no-start <backup_path>
+6. 用户确认后再启动或覆盖容器
+```
+
+##### 9. OpenCLI 调用示例
+
+注册后，AI 可以通过 OpenCLI 发现 `docker-backup-cli` 这个外部 CLI。常见调用意图如下：
+
+```text
+检查 Docker 备份工具状态：
+  docker-backup-cli status --json
+
+列出可恢复备份：
+  docker-backup-cli list-backups --json
+
+校验指定备份：
+  docker-backup-cli verify /tmp/docker-backups/nginx_20260516_120000
+
+恢复前预检：
+  docker-backup-cli dry-run /tmp/docker-backups/nginx_20260516_120000
+
+安全恢复，不自动启动：
+  docker-backup-cli restore --no-start /tmp/docker-backups/nginx_20260516_120000
+```
+
+##### 10. AI 安全约束
+
+AI 调用时应遵循以下安全规则：
+- 恢复前必须先执行 `verify` 和 `dry-run`
+- 不要默认使用 `--force`
+- 不要默认执行清理命令
+- 清理、覆盖恢复、下载并恢复都需要用户明确确认
+- 查询类命令优先使用 `--json`
+- 恢复后建议先让用户确认日志和容器状态，再执行生产流量切换
 
 #### 备份操作
 ```bash
@@ -1181,6 +1376,7 @@ docker-backup/
 ├── docker-backup.sh              # 主备份脚本
 ├── docker-restore.sh             # 恢复脚本
 ├── docker-verify.sh              # 备份完整性校验脚本
+├── docker-backup-cli.sh          # AI友好统一CLI入口
 ├── docker-backup-menu.sh         # 交互式菜单
 ├── docker-cleanup.sh             # 清理工具
 ├── backup-utils.sh               # 工具函数库
@@ -1205,6 +1401,7 @@ docker-backup/
 - **docker-backup.sh**: 主要的Docker容器备份脚本
 - **docker-restore.sh**: 容器恢复脚本，支持 dry-run 预检
 - **docker-verify.sh**: 校验备份目录结构、manifest.json 和 checksums.sha256
+- **docker-backup-cli.sh**: 统一封装备份、恢复、校验、清理等命令，支持 OpenCLI/AI Agent 调用
 - **docker-backup-menu.sh**: 交互式操作菜单
 - **docker-cleanup.sh**: 备份文件清理工具
 - **go/callback/**: 基于Go的HTTP回调API服务，支持外部系统触发备份

@@ -207,6 +207,7 @@ upgrade_installed_tools() {
         "docker-backup.sh"
         "docker-restore.sh"
         "docker-verify.sh"
+        "docker-backup-cli.sh"
         "backup-utils.sh"
         "docker-backup-menu.sh"
         "docker-cleanup.sh"
@@ -705,6 +706,7 @@ install_files() {
         "docker-backup.sh"
         "docker-restore.sh"
         "docker-verify.sh"
+        "docker-backup-cli.sh"
         "backup-utils.sh"
         "docker-backup-menu.sh"
         "docker-cleanup.sh"
@@ -916,6 +918,13 @@ cd $INSTALL_DIR
 exec ./docker-verify.sh "\$@"
 EOF
 
+    # 创建AI友好统一CLI命令
+    cat > /usr/local/bin/docker-backup-cli << EOF
+#!/bin/bash
+cd $INSTALL_DIR
+exec ./docker-backup-cli.sh "\$@"
+EOF
+
     # 创建清理命令
     cat > /usr/local/bin/docker-cleanup << EOF
 #!/bin/bash
@@ -941,6 +950,7 @@ EOF
     chmod +x /usr/local/bin/docker-restore
     chmod +x /usr/local/bin/docker-backup-menu
     chmod +x /usr/local/bin/docker-verify
+    chmod +x /usr/local/bin/docker-backup-cli
     chmod +x /usr/local/bin/docker-cleanup
     chmod +x /usr/local/bin/docker-backup-server
     chmod +x /usr/local/bin/docker-backup-download
@@ -952,6 +962,7 @@ EOF
     log_info "  docker-restore /path/to/backup # 恢复容器"
     log_info "  docker-backup-menu            # 交互式菜单"
     log_info "  docker-verify /path/to/backup # 校验备份完整性"
+    log_info "  docker-backup-cli status      # AI友好统一CLI入口"
     log_info "  docker-cleanup 30             # 清理30天前的备份"
     log_info "  docker-backup-server          # 启动HTTP服务器"
     log_info "  docker-backup-download URL    # 下载并恢复备份"
